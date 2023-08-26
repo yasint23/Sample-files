@@ -1,0 +1,48 @@
+version: '3.7'
+
+services:
+  mysqldb:
+    image: mysql:5.7
+    volumes:
+      - db_data:/var/lib/mysql
+    environment:
+      MYSQL_DATABASE: proje
+      MYSQL_USER: projemaster
+      MYSQL_PASSWORD_FILE: /run/secrets/db_password
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+    secrets:
+      - db_password
+      - db_root_password
+    networks:
+      - webnet
+
+  websrv:
+    image: wordpress:latest
+    deploy:
+      replicas: 3
+    depends_on:
+      - mysqldb
+    ports:
+      - "80:80"
+    networks:
+      - webnet
+    environment:
+      WORDPRESS_DB_HOST: mysqldb:3306
+      WORDPRESS_DB_USER: projemaster
+      WORDPRESS_DB_PASSWORD_FILE: /run/secrets/db_password
+      WORDPRESS_DB_NAME: proje
+    secrets:
+      - db_password
+
+secrets:
+  db_password:
+    file: db_password.txt
+  db_root_password:
+    file: db_root_password.txt
+  
+networks:
+  webnet:
+    driver: overlay
+
+volumes:
+  db_data:

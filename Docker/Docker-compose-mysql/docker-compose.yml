@@ -1,0 +1,28 @@
+version: '3.7'
+
+services:
+  database:
+    image: mysql:5.7
+    container_name: database
+    environment:
+      MYSQL_ROOT_PASSWORD: T123456t
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: tomas8199
+      MYSQL_DATABASE: bookstore_db
+    networks:
+      - apinet
+  
+  myapp:
+    image: nec2005/bookstoreapi:latest
+    container_name: myapp
+    restart: always
+    depends_on: 
+    - database
+    ports:
+      - "80:80"
+    networks:
+      - apinet
+
+networks:
+  apinet:
+

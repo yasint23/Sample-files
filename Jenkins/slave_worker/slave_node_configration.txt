@@ -1,0 +1,67 @@
+### First Way ### - Slave Node Configuration
+---master---
+
+sudo su - jenkins -s /bin/bash
+ssh-keygen
+cd .ssh
+cat id_rsa.pub  #(copy public key to slave node)
+
+
+---slave---
+
+sudo yum update -y
+sudo amazon-linux-extras install java-openjdk11 -y
+sudo yum install java-devel 
+
+sudo su
+cd /root/.ssh
+vi authorized_keys #(copied from public key(id_rsa.pub))
+ifconfig
+ssh root@<slave-node-ip-number>
+exit
+
+
+### Second Way ### - Copy agent file from Jenkins server 
+
+---slave---
+
+cd /
+mkdir bin
+cd bin
+wget http://<jenkins_master_ip>:8080/jnlpJars/slave.jar
+
+
+---master--- on jenkins dashboard
+
+Manage Jenkins
+Manage Nodes and Clouds
+New Node
+Permanent Agent
+/usr/jenkins
+Linux in the "Labels" field
+Enter ssh -i /var/lib/jenkins/.ssh/<the_key_file> root@<slave_ip> java -jar /root/bin/slave.jar in the "Launch command" field
+Keep this agent online as much as possible
+Save
+
+
+
+### example pipeline on slave ###
+
+pipeline {
+    agent { label 'Linux' }
+    stages {
+        stage('build') {
+            steps {
+                echo "Clarusway_Way to Reinvent Yourself"
+                sh 'echo second step'
+                sh 'echo another step'
+                sh 'sleep 30'
+                sh '''
+                echo 'working on'
+                echo 'slave node'
+                '''
+          
+            }
+        }
+    }
+}

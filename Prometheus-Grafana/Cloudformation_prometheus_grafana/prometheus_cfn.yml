@@ -1,0 +1,296 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Cloudformation for the Prometheus stack
+
+Parameters:
+  VPC:
+    Description: VPC
+    Type: AWS::EC2::VPC::Id
+
+  AppSubnet1:
+    Description: AppSubnet1
+    Type: AWS::EC2::Subnet::Id
+
+  AppSubnet2:
+    Description: AppSubnet2
+    Type: AWS::EC2::Subnet::Id
+
+  DataSubnet1:
+    Description: DataSubnet1
+    Type: AWS::EC2::Subnet::Id
+
+  DataSubnet2:
+    Description: DataSubnet2
+    Type: AWS::EC2::Subnet::Id
+
+  DataSubnet3:
+    Description: DataSubnet3
+    Type: AWS::EC2::Subnet::Id
+
+  VPCCidr:
+    Description: VPC
+    Type: String
+
+  DataSubnet1Cidr:
+    Description: DataSubnet1
+    Type: String
+
+  DataSubnet2Cidr:
+    Description: DataSubnet2
+    Type: String
+
+  DataSubnet3Cidr:
+    Description: DataSubnet3
+    Type: String
+
+  AZ1SeedNode:
+    Description: AZ Seed node
+    Type: String
+
+  AZ2SeedNode:
+    Description: AZ Seed node
+    Type: String
+
+  AZ3SeedNode:
+    Description: AZ Seed node
+    Type: String
+
+  ConsulSecurityGroup:
+    Description: Security group for the gossip required for consul service discovery to work
+    Type: AWS::EC2::SecurityGroup::Id
+
+  LoadbalancingSecurityGroup:
+    Description: Security group for access from the Load Balancer
+    Type: AWS::EC2::SecurityGroup::Id
+
+  HTTPInternetAccessSecurityGroup:
+    Description: Security group for internet access
+    Type: AWS::EC2::SecurityGroup::Id
+
+  MetricsDataClientSecurityGroup:
+    Description: Security group for metrics database tier
+    Type: AWS::EC2::SecurityGroup::Id
+
+  MetricsDataSecurityGroup:
+    Description: Security group for metrics database tier
+    Type: AWS::EC2::SecurityGroup::Id
+
+  LoadBalancerDNS:
+    Description: LoadBalancer
+    Type: String
+
+  LoadBalancerListener:
+    Description: Listener for https for loadbalancer
+    Type: String
+
+  EnvironmentName:
+    Description: Environment Name
+    Type: String
+
+  AssetLocation:
+    Description: Location of the build assets for provisioning
+    Type: String
+
+  BuildNumber:
+    Type: String
+    Description: Identififer of this build version
+
+Mappings:
+  AWSRegionToAMI:
+    eu-central-1:
+      AMI: ami-<your-ami-here>
+    eu-west-1:
+      AMI: ami-<your-ami-here>
+
+Resources:
+  MetricsPrometheusAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: !Sub MetricsPrometheus-${EnvironmentName}
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - 's3:*'
+                - 'ec2:DescribeInstances'
+                - 'ec2:DescribeTags'
+                - 'logs:*'
+                - 'ssm:UpdateInstanceInformation'
+                - 'ssm:ListAssociations'
+                - 'ssm:ListInstanceAssociations'
+                - 'ec2messages:GetMessages'
+                - 'cloudwatch:PutMetricData'
+                Effect: Allow
+                Resource: '*'
+
+  MetricsPrometheusInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: /
+      Roles:
+        - !Ref MetricsPrometheusAccessRole
+      InstanceProfileName: !Sub MetricsPrometheus-${EnvironmentName}
+
+  MetricsPrometheusTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-prometheus
+      VpcId: !Ref VPC
+      Port: 9090
+      Protocol: HTTP
+      HealthCheckIntervalSeconds: 20
+      HealthCheckPath: /graph
+      HealthCheckPort: 9090
+      HealthCheckProtocol: HTTP
+
+  MetricsPrometheusListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn:
+            Ref: MetricsPrometheusTargetGroup
+      Conditions:
+        - Field: host-header
+          Values: 
+            - "prometheus.*"
+      ListenerArn:
+        Ref: LoadBalancerListener
+      Priority: 2
+
+  MetricsPrometheusDNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${EnvironmentName}.<your-hosted-zone>."
+      Comment: DNS Name for Prometheus
+      Name: !Sub prometheus.${EnvironmentName}.<your-name>
+      Type: CNAME
+      TTL: '60'
+      ResourceRecords:
+        - !Ref LoadBalancerDNS
+
+  MetricsPrometheusLaunchConfig:
+    Type: "AWS::AutoScaling::LaunchConfiguration"
+    Metadata:
+      AWS::CloudFormation::Authentication:
+        S3Creds:
+          type: "S3"
+          roleName: !Ref MetricsPrometheusAccessRole
+
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              awslogs: []
+          files:
+            "/etc/awslogs/awscli.conf":
+                content: !Sub |
+                    [plugins]
+                    cwlogs = cwlogs
+                    [default]
+                    region = ${AWS::Region}
+            "/etc/awslogs/awslogs.conf":
+                content: !Sub |
+                    [general]
+                    state_file = /var/lib/awslogs/agent-state
+                    [/var/log/dmesg]
+                    file = /var/log/dmesg
+                    log_group_name = ${EnvironmentName}
+                    log_stream_name = ${EnvironmentName}-prometheus-/var/log/dmesg
+                    [/var/log/cfn-init.log]
+                    file = /var/log/cfn-init.log
+                    log_group_name = ${EnvironmentName}
+                    log_stream_name = ${EnvironmentName}-prometheus-/var/log/cfn-init.log
+                    [/var/log/messages]
+                    file = /var/log/messages
+                    log_group_name = ${EnvironmentName}
+                    log_stream_name = ${EnvironmentName}-prometheus-/var/log/messages
+                    datetime_format = %b %d %H:%M:%S
+          files:
+            /provision/infrastructure.tgz:
+              source: !Sub ${AssetLocation}infrastructure-${BuildNumber}.tgz
+              authentication: S3Creds
+
+            /provision/start.sh:
+              content: !Sub |
+                cd /provision/
+                tar -zxvf infrastructure.tgz
+                echo ${EnvironmentName}
+                aws_instance=$(wget -q -O- http://169.254.169.254/latest/meta-data/instance-id)
+                region=`curl http://169.254.169.254/latest/dynamic/instance-identity/document|grep region|awk -F\" '{print $4}'`
+                componentName=prometheus
+                componentVersion=${BuildNumber}
+                environmentName=${EnvironmentName}
+                cd /provision/ansible/playbooks/cloudformation
+                ansible-playbook prometheus.yml -i "127.0.0.1,"  \
+                --extra-vars="@../../../environment_vars/${EnvironmentName}.yml" \
+                --connection=local --extra-vars="env_name=$environmentName" \
+                --extra-vars="aws_region=$region" \
+                --extra-vars="component_name=$componentName" \
+                --extra-vars="component_version=$componentVersion" \
+                --extra-vars="seed_node_1_IP=${AZ1SeedNode}" \
+                --extra-vars="seed_node_2_IP=${AZ2SeedNode}" \
+                --extra-vars="seed_node_3_IP=${AZ3SeedNode}"
+              mode: '000755'
+          commands:
+            go-command:
+              command: /provision/start.sh
+    Properties:
+      ImageId:  !FindInMap [AWSRegionToAMI, !Ref "AWS::Region", AMI]
+      SecurityGroups:
+        - Ref: MetricsDataSecurityGroup
+        - Ref: ConsulSecurityGroup
+        - Ref: MetricsDataClientSecurityGroup
+        - Ref: LoadbalancingSecurityGroup
+        - Ref: HTTPInternetAccessSecurityGroup
+      InstanceType: m4.large
+      IamInstanceProfile: !Ref MetricsPrometheusInstanceProfile
+      BlockDeviceMappings:
+          - DeviceName: "/dev/xvda"
+            Ebs:
+              VolumeType: "standard"
+              DeleteOnTermination: "true"
+              VolumeSize: "20"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # This is needed for cfn-init to reinitialize the instances with the new version on updates
+          BUILD_NUMBER="1"
+          yum install -y aws-cfn-bootstrap
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --resource MetricsPrometheusLaunchConfig --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackId} --resource MetricsPrometheusAsg --region ${AWS::Region}
+
+  MetricsPrometheusAsg:
+    Type: "AWS::AutoScaling::AutoScalingGroup"
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref AppSubnet1
+        - !Ref AppSubnet2
+      LaunchConfigurationName:
+        Ref: MetricsPrometheusLaunchConfig
+      TargetGroupARNs:
+        - Ref: MetricsPrometheusTargetGroup
+      MaxSize: "4"
+      MinSize: "2"
+      DesiredCapacity: "2"
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Metrics Prometheus
+          PropagateAtLaunch: true
+        - Key: environment
+          Value: !Sub ${EnvironmentName}
+          PropagateAtLaunch: true
+        - Key: Component
+          Value: prometheus
+          PropagateAtLaunch: true

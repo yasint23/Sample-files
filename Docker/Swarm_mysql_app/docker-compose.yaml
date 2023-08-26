@@ -1,0 +1,44 @@
+version: "3.7"
+
+services:
+  database:
+    image: mysql:5.7
+    environment:
+      MYSQL_ROOT_PASSWORD: T123456t
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: tomas8199
+      MYSQL_DATABASE: phonebook_db
+    volumes:
+      - db-data:/var/lib/mysql
+    configs:
+      - source: table
+        target: /docker-entrypoint-initdb.d/init.sql
+    networks:
+      - appnet
+
+  app-server:
+    env_file: .env
+    image: "${ECR_REPO}:latest"
+    deploy:
+      mode: global
+      update_config:
+          parallelism: 2
+          delay: 5s
+          order: start-first
+    ports:
+      - "80:80"
+    networks:
+      - appnet
+
+
+networks:
+  appnet:
+    driver: overlay
+
+volumes:
+  db-data:
+
+configs:
+  table:
+    file: ./init.sql
+
