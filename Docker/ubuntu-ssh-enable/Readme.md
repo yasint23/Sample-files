@@ -4,7 +4,7 @@
 
 - Run the container:
 
-docker run -d yasint/ubuntu-ssh-enabled
+docker run -it -d yasint/ubuntu-ssh-enabled
 
 Identify the Internal IP
 
@@ -12,7 +12,7 @@ docker inspect <container-id-name>
 
 SSH
 
-ssh <container-ip>
+ssh <container-ip> 172.17.0.2
 
 Username: root
 
